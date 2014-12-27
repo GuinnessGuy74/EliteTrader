@@ -237,6 +237,7 @@ class TradeCalc(object):
         self.tdb = tdb
         self.tdenv = tdenv
         self.defaultFit = fit or self.fastFit
+        self.destCache = {}
 
 
     def bruteForceFit(self, items, credits, capacity, maxUnits):
@@ -442,6 +443,43 @@ class TradeCalc(object):
         return fitFunction(items, credits, capacity, maxUnits)
 
 
+    def loadTradingDestinations(
+            self,
+            tdb, tdenv, 
+            srcStation,
+            maxJumpsPer,
+            maxLyPer,
+            avoidPlaces,
+            restrictTo,
+            ):
+        """
+        Generate a list of destinations a given station can reach, limited
+        to stations it can trade with, and then load the trades.
+        """
+        destinations = tdb.getDestinations(
+                srcStation,
+                maxJumps=maxJumpsPer,
+                maxLyPer=maxLyPer,
+                avoidPlaces=avoidPlaces,
+                trading=False,
+        )
+        stations = [
+            dest.station for dest in destinations
+            if dest.station.itemCount and (
+                    not restrictTo or
+                    (dest.station in restrictTo or
+                        dest.system in restrictTo)
+            )
+        ]
+        tdb.loadStationTrades(srcStation, stations)
+        tradingWith = frozenset(srcStation.tradingWith.keys())
+        destinations = [
+            dest for dest in destinations
+            if dest.station in tradingWith
+        ]
+        return destinations
+
+
     def getBestHops(self, routes, restrictTo=None):
         """
             Given a list of routes, try all available next hops from each
@@ -456,6 +494,7 @@ class TradeCalc(object):
 
         tdb = self.tdb
         tdenv = self.tdenv
+
         avoidItems = getattr(tdenv, 'avoidItems', [])
         avoidPlaces = getattr(tdenv, 'avoidPlaces', [])
         assert not restrictTo or isinstance(restrictTo, set)
@@ -467,18 +506,13 @@ class TradeCalc(object):
         safetyMargin = 1.0 - tdenv.margin
         unique = tdenv.unique
 
-        stationsNotYetLoaded = [
-                src.ID for src in [ route.route[-1] for route in routes ] 
-                    if src.tradingWith is None
-        ]
-        if stationsNotYetLoaded:
-            tdb.loadStationTrades(stationsNotYetLoaded)
-
         # Penalty is expressed as percentage, reduce it to a multiplier
         if tdenv.lsPenalty:
             lsPenalty = tdenv.lsPenalty / 100
         else:
             lsPenalty = 0
+
+        destCache = self.destCache
 
         for route in routes:
             tdenv.DEBUG1("Route = {}", route.str())
@@ -487,13 +521,25 @@ class TradeCalc(object):
             startCr = credits + int(route.gainCr * safetyMargin)
             routeJumps = len(route.jumps)
 
-            for dest in tdb.getDestinations(
-                                srcStation,
-                                maxJumps=maxJumpsPer,
-                                maxLyPer=maxLyPer,
-                                avoidPlaces=avoidPlaces,
-                                trading=True,
-                    ):
+            # Look up potential destinations
+            try:
+                destinations, restrictions = destCache[srcStation]
+                print('cache hit')
+            except KeyError:
+                destinations, restrictions = None, None
+            if not destinations or restrictions != restrictTo:
+                # Not in the cache, we're going to need load trades.
+                destinations = self.loadTradingDestinations(
+                        tdb, tdenv, 
+                        srcStation,
+                        maxJumpsPer,
+                        maxLyPer,
+                        avoidPlaces,
+                        restrictTo,
+                )
+                destCache[srcStation] = (destinations, restrictTo)
+
+            for dest in destinations:
                 dstSystem, dstStation = dest.system, dest.station
                 dstLy = dest.distLy
                 tdenv.DEBUG1("destSys {}, destStn {}, jumps {}, distLy {}",

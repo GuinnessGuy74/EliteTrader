@@ -13,7 +13,7 @@
     <LaunchProvider>Standard Python launcher</LaunchProvider>
     <InterpreterId />
     <InterpreterVersion />
-    <CommandLineArguments>run -vv --ly 10.38 --empty 11.16 --cap 18 --jumps 6 --cr 131366 --from "aritimi" -s 3</CommandLineArguments>
+    <CommandLineArguments>run -vv --ly 9.15 --empty 13.86 --cap 100 --jumps 6 --cr 604904 --from "daedalus" --hops 5 --max 3 --ly 17.01</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'" />

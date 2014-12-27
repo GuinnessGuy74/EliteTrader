@@ -163,7 +163,7 @@ class Station(object):
 
 
     def str(self):
-        return self.dbname
+        return self.name()
 
 
     def __repr__(self):
@@ -1185,62 +1185,63 @@ class TradeDB(object):
     ############################################################
     # Price data.
 
-    def loadStationTrades(self, fromStationIDs):
+    def loadStationTrades(self, station, destStations):
         """
             Loads all profitable trades that could be made
             from the specified list of stations. Does not
             take reachability into account.
         """
 
-        if not fromStationIDs:
-            return
+        self.tdenv.DEBUG1("Loading trades for {}", station)
 
-        assert isinstance(fromStationIDs, list)
-        assert isinstance(fromStationIDs[0], int)
-
-        self.tdenv.DEBUG1("Loading trades for {}", fromStationIDs)
-
-        stmt = """
-                SELECT  *
-                  FROM  vProfits
-                 WHERE  src_station_id IN ({})
-                 ORDER  BY src_station_id, dst_station_id, gain DESC
-                """.format(','.join(str(ID) for ID in fromStationIDs))
-        self.tdenv.DEBUG2("SQL:\n{}\n", stmt)
-        self.cur.execute(stmt)
-        stations, items = self.stationByID, self.itemByID
-
-        prevSrcStnID, prevDstStnID = None, None
-        srcStn, dstStn = None, None
-        tradingWith = None
         if self.tradingCount is None:
             self.tradingCount = 0
+        stations, items = self.stationByID, self.itemByID
+        if not station.tradingWith:
+            station.tradingWith = {}
+        stnTradingWith = station.tradingWith
+        unloaded = list(set(
+            station.ID for station in destStations
+            if station not in stnTradingWith
+        ))
+        while unloaded:
+            loading, unloaded = unloaded[:32], unloaded[32:]
 
-        for (
-                itemID,
-                srcStnID, dstStnID,
-                srcPriceCr, profit,
-                stock, stockLevel,
-                demand, demandLevel,
-                srcAge, dstAge
-        ) in self.cur:
-            if srcStnID != prevSrcStnID:
-                srcStn = stations[srcStnID]
-                prevSrcStnID = srcStnID
-                prevDstStnID = None
-                assert srcStn.tradingWith is None
-                srcStn.tradingWith = {}
-            if dstStnID != prevDstStnID:
-                dstStn, prevDstStnID = stations[dstStnID], dstStnID
-                tradingWith = srcStn.tradingWith[dstStn] = []
-                self.tradingCount += 1
-            tradingWith.append(Trade(
-                    items[itemID], itemID,
+            stmt = """
+                    SELECT  *
+                      FROM  vProfits
+                     WHERE  src_station_id = {}
+                            AND dst_station_id IN ({})
+                     ORDER  BY dst_station_id, gain DESC
+                    """.format(
+                        station.ID,
+                        ','.join('?' * len(loading)),
+            )
+            self.tdenv.DEBUG2("SQL:\n{}\n{}\n", stmt, loading)
+            self.cur.execute(stmt, loading)
+
+            prevDstStnID, dstStn = None, None
+
+            for (
+                    itemID,
+                    srcStnID, dstStnID,
                     srcPriceCr, profit,
                     stock, stockLevel,
                     demand, demandLevel,
-                    srcAge, dstAge))
-
+                    srcAge, dstAge
+            ) in self.cur:
+                if dstStnID != prevDstStnID:
+                    dstStn, prevDstStnID = stations[dstStnID], dstStnID
+                    dstTradingWith = stnTradingWith[dstStn] = []
+                    self.tradingCount += 1
+                trade = Trade(
+                        items[itemID], itemID,
+                        srcPriceCr, profit,
+                        stock, stockLevel,
+                        demand, demandLevel,
+                        srcAge, dstAge
+                )
+                dstTradingWith.append(trade)
 
     def getTrades(self, src, dst):
         """ Returns a list of the Trade objects between src and dst. """
